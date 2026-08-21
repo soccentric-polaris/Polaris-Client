@@ -2,11 +2,36 @@
 
 ## Project Summary
 
-Polaris-Client is a C++17 embedded-Linux daemon that runs hardware-validation work on a target board and exchanges results with Polaris-Server. The executable is assembled from configuration, stream, run, registry, spool, logging, diagnostics, OTA, and HAL-service components under `src/`, with `src/main.cpp` and `src/app.cpp` providing the application entry path. The registry and adapter tree expose module-specific test execution for compute, thermal, storage, networking, cameras, sensors, safety, and other board capabilities. Unsupported or incomplete module paths are represented by the existing stub behavior, so the adapter catalog should not be read as proof that every hardware test is functional.
+- Polaris-Client is a C++17 embedded-Linux daemon that runs
+  hardware-validation work on a target board and exchanges results with
+  Polaris-Server. The executable is assembled from configuration, stream,
+  run, registry, spool, logging, diagnostics, OTA, and HAL-service
+  components under `src/`, with `src/main.cpp` and `src/app.cpp` providing
+  the application entry path. The registry and adapter tree expose
+  module-specific test execution for compute, thermal, storage, networking,
+  cameras, sensors, safety, and other board capabilities. Unsupported or
+  incomplete module paths are represented by the existing stub behavior, so
+  the adapter catalog should not be read as proof that every hardware test
+  is functional.
 
-The client has two gRPC roles. Its outbound stream connects to the server for commands, heartbeats, results, and logs; its inbound HAL service lets the Python SDK or another integration client request module operations. Result serialization bridges HAL data into protobuf messages, while the SQLite spool preserves results and logs when the network is unavailable. Configuration examples live in `conf/`, systemd packaging is under `systemd/`, and Docker helpers support cross-build workflows. The repository also contains design notes in `client_update/` that document implementation history and remaining work.
+- The client has two gRPC roles. Its outbound stream connects to the server
+  for commands, heartbeats, results, and logs; its inbound HAL service lets
+  the Python SDK or another integration client request module operations.
+  Result serialization bridges HAL data into protobuf messages, while the
+  SQLite spool preserves results and logs when the network is unavailable.
+  Configuration examples live in `conf/`, systemd packaging is under
+  `systemd/`, and Docker helpers support cross-build workflows. The
+  repository also contains design notes in `client_update/` that document
+  implementation history and remaining work.
 
-Automated evidence is narrow but concrete: `tests/test_result_serializer.cc` covers serialization and `tests/test_run_orchestrator.cc` covers orchestration. The Makefile exposes `configure`, `build`, `test`, `format`, `cppcheck`, `doc`, and Docker targets; the CMake test binaries and `ctest --output-on-failure` are useful validation entry points. Network, real-device, service-manager, and hardware-peripheral behavior still requires manual verification.
+- Automated evidence is narrow but concrete:
+  `tests/test_result_serializer.cc` covers serialization and
+  `tests/test_run_orchestrator.cc` covers orchestration. The Makefile
+  exposes `configure`, `build`, `test`, `format`, `cppcheck`, `doc`, and
+  Docker targets; the CMake test binaries and `ctest --output-on-failure`
+  are useful validation entry points. Network, real-device,
+  service-manager, and hardware-peripheral behavior still requires manual
+  verification.
 
 ## Feature Inventory
 
