@@ -1,233 +1,39 @@
-# Polaris-Client > **gRPC-based daemon for IV&V (Independent Verification & Validation) hardware testing on embedded Linux platforms** Polaris-Client is a C++17 daemon that orchestrates hardware validation tests, collects results, and streams them to an Polaris-Server instance. It manages test execution, durable result storage, log collection, and provides gRPC endpoints for both server communication and SDK integration. --- ## Table of Contents - [Overview](#overview)
-- [Architecture](#architecture)
-- [System Requirements](#system-requirements)
-- [Dependencies](#dependencies)
-- [Building](#building) - [Native Build](#native-build) - [Docker Build (Cross-compilation)](#docker-build-cross-compilation)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Running](#running) - [Manual Execution](#manual-execution) - [Systemd Service](#systemd-service)
-- [Testing](#testing)
-- [Project Structure](#project-structure)
-- [Supported Hardware Modules](#supported-hardware-modules)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
-- [License](#license) --- ## Overview Polaris-Client provides: - **Test Orchestration**: Executes hardware validation tests via 35+ module adapters (CPU, GPU, Thermal, Storage, USB, Ethernet, etc.)
-- **Result Serialization**: Converts HAL test results to Protocol Buffer format with proper sequencing and timestamping
-- **Durable Storage**: SQLite-based spool for result buffering and replay on network interruption
-- **Server Streaming**: Bidirectional gRPC stream to Polaris-Server for commands and result delivery
-- **SDK Interface**: HalService gRPC endpoint for Python SDK and end-to-end test integration
-- **Log Collection**: Tails specified log files and forwards entries to server
-- **Diagnostic Socket**: Local diagnostic interface for health monitoring **Target Platforms**: Renesas RZ/G2L (Renesas RZ/G2L), Renesas RZ/G2L, or any ARM64/x86_64 Linux system with GPIO/hardware access. --- ## Architecture ```
-┌─────────────────────────────────────────────────────────────┐
-│ Polaris-Client │
-│ │
-│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ │
-│ │ StreamClient │──│ Spool │──│RunOrchestrator│ │
-│ │ (gRPC to │ │ (SQLite3) │ │ (Test Exec) │ │
-│ │ Server) │ └──────────────┘ └───────┬───────┘ │
-│ └──────────────┘ │ │
-│ │ │
-│ ┌──────────────┐ ┌──────────────┐ ┌───────▼───────┐ │
-│ │ LogCollector │ │ DiagSocket │ │ Module │ │
-│ │ │ │ │ │ Registry │ │
-│ └──────────────┘ └──────────────┘ └───────┬───────┘ │
-│ │ │
-│ ┌──────────────┐ ┌───────▼───────┐ │
-│ │ HalService │◄───────────────────│ 35+ Adapters │ │
-│ │ (gRPC for │ │ (HAL Bridge) │ │
-│ │ PySDK) │ └───────────────┘ │
-│ └──────────────┘ │
-└─────────────────────────────────────────────────────────────┘ ▲ │ │ │ │ ▼ Polaris-Server Polaris-HAL (gRPC Stream) (Hardware Abstraction)
-``` ### Core Components | Component | Purpose |
-|-----------|---------|
-| **StreamClient** | Bidirectional gRPC stream to Polaris-Server; handles reconnection and heartbeat |
-| **Spool** | SQLite3 database for durable result/log storage; enforces capacity limits |
-| **RunOrchestrator** | Executes test runs, invokes module adapters, serializes results |
-| **ModuleRegistry** | Loads `modules.yaml` and dispatches tests to appropriate adapters |
-| **HalService** | gRPC service (port 50052) for Python SDK to invoke HAL tests |
-| **LogCollector** | Tails configured log files and forwards to server |
-| **Janitor** | Periodic cleanup of old spool entries |
-| **DiagSocket** | Unix socket for local diagnostics | --- ## System Requirements ### Hardware
-- **Minimum**: ARM64 or x86_64 processor (Renesas RZ/G2L, Renesas RZ/G2L, or similar)
-- **Recommended**: 1 GB RAM, 2 GB storage for spool database ### Operating System
-- **Ubuntu 22.04 LTS** (primary target)
-- **Ubuntu 20.04 LTS** (supported with manual dependency builds)
-- Other Debian-based ARM64/x86_64 distributions (untested) ### Network
-- Connectivity to **Polaris-Server** (configurable IP/port)
-- Optional: Access to hardware peripherals (GPIO, I2C, SPI, USB, etc.) --- ## Dependencies ### Build-time Dependencies | Library | Version | Purpose |
-|---------|---------|---------|
-| **CMake** | ≥ 3.16 | Build system |
-| **GCC/G++** | ≥ 9.0 (C++17) | Compiler |
-| **Protocol Buffers** | ≥ 3.12 | Message serialization |
-| **gRPC** | ≥ 1.30 | RPC framework |
-| **spdlog** | ≥ 1.x | Structured logging |
-| **toml++** | ≥ 3.4 | Configuration parsing |
-| **yaml-cpp** | ≥ 0.7 | Module registry parsing |
-| **SQLite3** | ≥ 3.x | Spool database |
-| **GoogleTest** | ≥ 1.10 | Unit testing | ### Runtime Dependencies | Dependency | Notes |
-|------------|-------|
-| **Polaris-HAL** | Sibling repository (must be in `../Polaris-HAL/`) |
-| **libprotobuf.so** | Shared library for Protocol Buffers |
-| **libgrpc++.so** | gRPC C++ runtime | --- ## Building ### Prerequisites 1. **Clone both repositories** (they must be siblings): ```bash mkdir -p ~/workspace/Polaris cd ~/workspace/Polaris git clone <polaris-client-repo-url> Polaris-Client git clone <polaris-hal-repo-url> Polaris-HAL ``` 2. **Install system dependencies**: **Ubuntu 22.04/ 20.04:** ```bash sudo apt-get update sudo apt-get install -y \ build-essential cmake git \ protobuf-compiler libprotobuf-dev \ libgrpc++-dev libgrpc-dev \ libsqlite3-dev libspdlog-dev \ libgtest-dev pkg-config ninja-build ``` 3. **Install header-only libraries** (if not packaged): **toml++** (required on Ubuntu 22.04 ARM64): ```bash git clone --depth=1 --branch v3.4.0 https://github.com/marzer/tomlplusplus.git/tmp/tomlplusplus cmake -S/tmp/tomlplusplus -B/tmp/tomlplusplus/build \ -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib sudo cmake --install/tmp/tomlplusplus/build rm -rf/tmp/tomlplusplus ``` **yaml-cpp 0.8.0** (if system version lacks CMake targets): ```bash git clone --depth=1 --branch 0.8.0 https://github.com/jbeder/yaml-cpp.git/tmp/yaml-cpp cmake -S/tmp/yaml-cpp -B/tmp/yaml-cpp/build \ -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DYAML_CPP_BUILD_TESTS=OFF cmake --build/tmp/yaml-cpp/build --parallel sudo cmake --install/tmp/yaml-cpp/build rm -rf/tmp/yaml-cpp ``` 4. **Build grpc_cpp_plugin** (if missing): ```bash # Check if grpc_cpp_plugin exists which grpc_cpp_plugin || { # Build from source (see Dockerfile for full build script) # Alternatively, install grpc-plugins package if available sudo apt-get install -y protobuf-compiler-grpc } ``` --- ### Native Build **Using Makefile** (recommended):
+# Polaris-Client
+
+## Project Summary
+
+Polaris-Client is a C++17 embedded-Linux daemon that runs hardware-validation work on a target board and exchanges results with Polaris-Server. The executable is assembled from configuration, stream, run, registry, spool, logging, diagnostics, OTA, and HAL-service components under `src/`, with `src/main.cpp` and `src/app.cpp` providing the application entry path. The registry and adapter tree expose module-specific test execution for compute, thermal, storage, networking, cameras, sensors, safety, and other board capabilities. Unsupported or incomplete module paths are represented by the existing stub behavior, so the adapter catalog should not be read as proof that every hardware test is functional.
+
+The client has two gRPC roles. Its outbound stream connects to the server for commands, heartbeats, results, and logs; its inbound HAL service lets the Python SDK or another integration client request module operations. Result serialization bridges HAL data into protobuf messages, while the SQLite spool preserves results and logs when the network is unavailable. Configuration examples live in `conf/`, systemd packaging is under `systemd/`, and Docker helpers support cross-build workflows. The repository also contains design notes in `client_update/` that document implementation history and remaining work.
+
+Automated evidence is narrow but concrete: `tests/test_result_serializer.cc` covers serialization and `tests/test_run_orchestrator.cc` covers orchestration. The Makefile exposes `configure`, `build`, `test`, `format`, `cppcheck`, `doc`, and Docker targets; the CMake test binaries and `ctest --output-on-failure` are useful validation entry points. Network, real-device, service-manager, and hardware-peripheral behavior still requires manual verification.
+
+## Feature Inventory
+
+| # | Name / Description | Implemented? | Test Coverage? | Manual Test |
+|---:|---|---|---|---|
+| 1 | C++17 daemon entry point and application lifecycle (`src/main.cpp`, `src/app.cpp`) | Implemented | Build target exists; no dedicated lifecycle test found | [ ] Manual verification required |
+| 2 | TOML configuration and sample files in `conf/` | Implemented | No focused config test found | [ ] Manual verification required |
+| 3 | Outbound gRPC command/result stream and reconnect path (`src/stream`) | Implemented | No focused stream test found | [ ] Manual verification required |
+| 4 | Heartbeat and target communication | Implemented | No focused heartbeat test found | [ ] Manual verification required |
+| 5 | Run orchestration and batching (`src/run`) | Implemented | `tests/test_run_orchestrator.cc` | [ ] Manual verification required |
+| 6 | HAL-to-protobuf result serialization (`src/hal_bridge`) | Implemented | `tests/test_result_serializer.cc` | [ ] Manual verification required |
+| 7 | SQLite result and log spool (`src/spool`) | Implemented | No focused spool test found | [ ] Manual verification required |
+| 8 | Module registry and adapter dispatch (`src/registry`) | Implemented | No broad adapter matrix test found | [ ] Manual verification required |
+| 9 | Hardware adapter catalog | Partial | Orchestration tests only; per-adapter coverage not found | [ ] Manual verification required |
+| 10 | Inbound HalService gRPC endpoint (`src/hal_service`) | Implemented | No focused service test found | [ ] Manual verification required |
+| 11 | Log tailing and forwarding (`src/log`) | Implemented | No focused log test found | [ ] Manual verification required |
+| 12 | Janitor cleanup and diagnostic socket (`src/janitor`, `src/diag`) | Implemented | No focused tests found | [ ] Manual verification required |
+| 13 | OTA client path (`src/ota`) | Partial | No focused OTA test found | [ ] Manual verification required |
+| 14 | Native and Docker cross-build workflows | Implemented | `make build`, Docker targets declared | [ ] Manual verification required |
+
+## Validation
+
 ```bash
-cd ~/workspace/Polaris/Polaris-Client
-make configure # Run CMake
-make build # Compile with Ninja
-``` **Using CMake directly**:
-```bash
-cd ~/workspace/Polaris/Polaris-Client
-mkdir -p build/native
-cd build/native
-cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build . --parallel $(nproc)
-``` **Output**:
-- Binary: `build/native/bin/polaris-client`
-- Tests: `build/native/bin/test_result_serializer`, `build/native/bin/test_run_orchestrator` --- ### Docker Build (Cross-compilation) For cross-compiling from x86_64 to ARM64 (Renesas RZ/G2L): 1. **Build Docker image**: ```bash cd ~/workspace/Polaris/Polaris-Client/docker make build # or: docker buildx build --platform linux/arm64 --load -t polaris . ``` 2. **Enter build container**: ```bash make run # Interactive shell in ARM64 container ``` 3. **Build inside container**: ```bash # Inside container: cd/workspace/Polaris-Client make docker-configure make docker-build ``` 4. **Extract binaries**: ```bash # On host: cd ~/workspace/Polaris/Polaris-Client docker run --rm -v $(pwd):/host polaris \ cp -r/workspace/Polaris-Client/build/cross/bin/host/build/cross/ ``` --- ## Installation ### Manual Installation 1. **Copy binary**: ```bash sudo install -m 0755 build/native/bin/polaris-client/usr/bin/polaris-client ``` 2. **Create configuration directory**: ```bash sudo mkdir -p/etc/polaris sudo cp conf/client.conf.sample/etc/polaris/client.conf sudo chown root:root/etc/polaris/client.conf sudo chmod 0644/etc/polaris/client.conf ``` 3. **Create spool directory**: ```bash sudo mkdir -p/var/lib/polaris/spool sudo chown polaris:polaris/var/lib/polaris/spool # See user setup below ``` 4. **Create polaris user** (for systemd service): ```bash sudo useradd -r -s/usr/sbin/nologin -d/var/lib/polaris polaris sudo chown -R polaris:polaris/var/lib/polaris ``` 5. **Install systemd service**: ```bash sudo cp systemd/polaris-client.service/etc/systemd/system/ sudo systemctl daemon-reload ``` --- ### CMake Install Alternatively, use the CMake install target:
-```bash
-cd build/native
-sudo cmake --install .
-``` This installs:
-- Binary → `/usr/bin/polaris-client`
-- Config → `/etc/polaris/client.conf`
-- Service → `/lib/systemd/system/polaris-client.service` --- ## Configuration Edit `/etc/polaris/client.conf`: ```toml
-# Polaris-Client configuration # ---------------------------------------------------------------------------
-# gRPC server (outbound — connects to Polaris-Server)
-# ---------------------------------------------------------------------------
-server_address = "192.168.1.100" # REQUIRED — IP or hostname of Polaris-Server
-server_port = 50051 # ---------------------------------------------------------------------------
-# HalService listener (inbound — PySDK connects to this Client port)
-# ---------------------------------------------------------------------------
-# hal_service_bind = "0.0.0.0" # bind address; "127.0.0.1" for loopback only
-# hal_service_port = 50052 # default 50052 # ---------------------------------------------------------------------------
-# Spool (durability store)
-# ---------------------------------------------------------------------------
-spool_path = "/var/lib/polaris/spool/spool.db"
-result_spool_cap_bytes = 2147483648 # 2 GiB
-log_spool_cap_bytes = 524288000 # 500 MiB # ---------------------------------------------------------------------------
-# TLS (leave empty for plaintext — lab-subnet default)
-# ---------------------------------------------------------------------------
-# tls_ca = "/etc/polaris/ca.crt"
-# tls_cert = "/etc/polaris/client.crt"
-# tls_key = "/etc/polaris/client.key" # ---------------------------------------------------------------------------
-# Extra log paths to tail and forward to server
-# ---------------------------------------------------------------------------
-# log_paths = [
-# "/var/log/polaris/hal.log",
-# ]
-``` **Required fields**:
-- `server_address`: IP/hostname of Polaris-Server instance **Optional**:
-- `hal_service_port`: Change if port 50052 conflicts
-- `tls_*`: Enable TLS for production deployments
-- `log_paths`: Additional log files to tail (e.g., HAL library logs) --- ## Running ### Manual Execution **Development run** (foreground):
-```bash/usr/bin/polaris-client --config/etc/polaris/client.conf
-``` **With debug logging**:
-```bash
-SPDLOG_LEVEL=debug/usr/bin/polaris-client --config/etc/polaris/client.conf
-``` The daemon will:
-1. Load configuration from `/etc/polaris/client.conf`
-2. Initialize spool database
-3. Connect to Polaris-Server (retry on failure)
-4. Start HalService listener on port 50052
-5. Begin heartbeat loop **Graceful shutdown**: Send `SIGTERM` or `SIGINT` (Ctrl+C) --- ### Systemd Service **Enable and start**:
-```bash
-sudo systemctl enable polaris-client.service
-sudo systemctl start polaris-client.service
-``` **Check status**:
-```bash
-sudo systemctl status polaris-client.service
-``` **View logs**:
-```bash
-sudo journalctl -u polaris-client.service -f # Follow logs
-sudo journalctl -u polaris-client.service -n 100 # Last 100 lines
-``` **Stop service**:
-```bash
-sudo systemctl stop polaris-client.service
-``` **Restart after config changes**:
-```bash
-sudo systemctl restart polaris-client.service
-``` --- ## Testing ### Run Unit Tests ```bash
-cd build/native
-ctest --output-on-failure
-``` Or run individual test binaries:
-```bash
-./bin/test_result_serializer
-./bin/test_run_orchestrator
-``` ### Available Tests | Test | Purpose |
-|------|---------|
-| `test_result_serializer` | Validates HAL → Protobuf serialization |
-| `test_run_orchestrator` | Tests orchestration logic and batching | ### Manual Integration Test 1. **Start Polaris-Server** (on remote machine or localhost)
-2. **Configure client** to point to server IP
-3. **Run client** with `--config` flag
-4. **Trigger test via SDK**: ```python # Python SDK example from polaris_sdk import Client client = Client("localhost:50052") result = client.run_test("cpu", "frequency_test") print(result) ``` --- ## Project Structure ```
-Polaris-Client/
-├── CMakeLists.txt # Root build configuration
-├── Makefile # High-level build commands
-├── Doxyfile.in # Doxygen documentation config
-├── src/
-│ ├── main.cpp # Entry point
-│ ├── app.h/ app.cpp # Top-level App object
-│ ├── common/ # Shared utilities
-│ ├── config/ # Configuration parsing (TOML)
-│ ├── stream/ # StreamClient (gRPC to server)
-│ ├── spool/ # Spool (SQLite3 storage)
-│ ├── run/ # RunOrchestrator (test execution)
-│ ├── registry/ # ModuleRegistry + 35+ adapters
-│ │ ├── AdapterBase.h # Base class for all adapters
-│ │ ├── AdapterRegistry.h # Adapter registration/lookup
-│ │ └── adapters/ # Module-specific adapters
-│ │ ├── cpu_adapter.h
-│ │ ├── gpu_adapter.h
-│ │ ├── thermal_adapter.h
-│ │ └── ... (35+ total)
-│ ├── hal_service/ # HalService gRPC endpoint
-│ ├── hal_bridge/ # ResultSerializer (HAL → Protobuf)
-│ ├── log/ # LogCollector
-│ ├── janitor/ # Cleanup tasks
-│ └── diag/ # DiagSocket
-├── tests/ # Unit tests (GoogleTest)
-├── conf/
-│ └── client.conf.sample # Sample configuration
-├── systemd/
-│ └── polaris-client.service # Systemd unit file
-├── docker/
-│ ├── Dockerfile # ARM64 build container
-│ └── Makefile # Docker build helpers
-└── client_update/ # Design documents ├── 01_discovery.md ├── 02_plan.md └── ...
-``` --- ## Supported Hardware Modules Polaris-Client includes adapters for **35 hardware modules** (with 16 additional modules planned): ### Active Modules (35) | Category | Modules |
-|----------|---------|
-| **Compute** | CPU, GPU, Deep Learning Accelerator, Vision Accelerator |
-| **Memory** | System Memory, Storage |
-| **Thermal** | Thermal, Environmental |
-| **Power** | Power Management, Watchdog and Reset |
-| **Networking** | Ethernet, Ethernet Switch, Communication Interface |
-| **Connectivity** | USB, PCIe, External Connector |
-| **Peripherals** | GPIO, Camera Interfaces, Camera Module 3, Display Interfaces |
-| **Sensors** | IMU, GNSS |
-| **Audio/Video** | Audio Interfaces, Video Encode/Decode |
-| **System** | Clock and Timing, Software Interface, System Integration |
-| **Safety** | Functional Safety, Reliability, Security Features |
-| **Debug** | Debug and Development Interfaces, MCU Interface |
-| **Specialized** | Serializer/Deserializer, PoE HAT, Sense HAT | ### Phase 3 Modules (16 — Planned) Accelerometer, Analog Input, Battery, Bluetooth, CAN Bus, eMMC, I²C, MIPI CSI, MIPI DSI, NVMe, PWM Output, RS-485, RTC, SD Card, SPI, UART ### Stub Adapter Unrecognized modules fall back to `StubAdapter`, which logs test invocations but returns honest SKIPPED results. --- ## Development ### Coding Standards - **Language**: C++17
-- **Style**: Follow existing conventions (see `.clang-format` if present)
-- **Logging**: Use `spdlog` macros (`spdlog::info`, `spdlog::error`, etc.)
-- **Error Handling**: Return `bool` or `Status` from init methods; log errors before returning ### Adding a New Module Adapter 1. **Create adapter files**: ```bash touch src/registry/adapters/my_module_adapter.h touch src/registry/adapters/my_module_adapter.cc ``` 2. **Implement `AdapterBase` interface**: ```cpp// my_module_adapter.h #pragma once #include "registry/AdapterBase.h" class MyModuleAdapter : public AdapterBase { public: std::string module_id const override { return "my_module"; } hal::TestResult run_test(const std::string& test_id, const TestParameters& params) override; }; ``` 3. **Register in `app.cpp`**: ```cpp #include "registry/adapters/my_module_adapter.h"// ... reg->register_adapter(std::make_unique<MyModuleAdapter>); ``` 4. **Build and test**: ```bash make build ./build/native/bin/polaris-client --config/etc/polaris/client.conf ``` --- ## Troubleshooting ### Common Issues #### 1. **gRPC connection fails** ``` [ERROR] StreamClient failed to connect to 192.168.1.100:50051 ``` **Solution**: - Verify `server_address` in `/etc/polaris/client.conf` - Check network connectivity: `ping 192.168.1.100` - Ensure Polaris-Server is running and reachable - Check firewall rules: `sudo ufw status` #### 2. **Missing `grpc_cpp_plugin`** ``` CMake Error: grpc_cpp_plugin not found ``` **Solution**: ```bash sudo apt-get install -y protobuf-compiler-grpc # OR build from source (see Dockerfile) ``` #### 3. **Spool database locked** ``` [ERROR] Spool::init failed: database is locked ``` **Solution**: - Stop conflicting instance: `sudo systemctl stop polaris-client` - Check for stale processes: `ps aux | grep polaris-client` - Remove lock if safe: `rm/var/lib/polaris/spool/spool.db-shm` #### 4. **Permission denied on `/var/lib/polaris`** ``` [ERROR] Failed to create spool.db: Permission denied ``` **Solution**: ```bash sudo chown -R polaris:polaris/var/lib/polaris sudo chmod 0755/var/lib/polaris ``` #### 5. **HAL library not found** ``` CMake Error: Could not find Polaris-HAL ``` **Solution**: - Ensure `Polaris-HAL` is in sibling directory: ```bash ls -ld ../Polaris-HAL # Should exist ``` - Clone HAL repository: `git clone <hal-repo> ../Polaris-HAL` #### 6. **Port 50052 already in use** ``` [ERROR] HalService failed to bind: Address already in use ``` **Solution**: - Check what's using the port: `sudo lsof -i :50052` - Change `hal_service_port` in config, or kill conflicting process --- ### Debug Logging Enable verbose logging:
-```bash
-SPDLOG_LEVEL=debug/usr/bin/polaris-client --config/etc/polaris/client.conf
-``` Or modify `main.cpp` and rebuild:
-```cpp
-spdlog::set_level(spdlog::level::debug);// Change from ::info
-``` --- ### Getting Help - **Check logs**: `journalctl -u polaris-client.service -n 200`
-- **Inspect spool**: `sqlite3/var/lib/polaris/spool/spool.db ".tables"`
-- **Test connectivity**: `grpcurl -plaintext <server_ip>:50051 list`
-- **GitHub Issues**: Report bugs with full logs and config (redact sensitive data) --- ## License [Specify license here — e.g., MIT, Apache 2.0, Proprietary] --- ## Contributing 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-adapter`)
-3. Commit changes (`git commit -am 'Add XYZ adapter'`)
-4. Push to branch (`git push origin feature/my-adapter`)
-5. Open a Pull Request **Guidelines**:
-- Add tests for new functionality
-- Update documentation
-- Follow existing code style
-- Ensure CI passes --- ## Acknowledgments - Built for IV&V hardware validation on Renesas RZ/G2L and Renesas RZ/G2L platforms
-- Uses gRPC for efficient client-server communication
-- Protocol Buffers for portable serialization
-- SQLite3 for durable local storage --- **Questions?** Contact the Polaris development team or file an issue on GitHub.
+make configure
+make build
+make test
+cd build/native && ctest --output-on-failure
+```
+
+The repository also contains Docker build/test targets for cross-compilation. Hardware access, server interoperability, systemd installation, and recovery from a full spool are not verified by the repository tests.
