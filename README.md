@@ -55,10 +55,8 @@
 ## Validation
 
 ```bash
-make configure
-make build
-make test
-cd build/native && ctest --output-on-failure
+make build          # Docker cross-build (ARM64) — the default and only build path
+make test           # ctest inside Docker
 ```
 
 The repository also contains Docker build/test targets for cross-compilation. Hardware access, server interoperability, systemd installation, and recovery from a full spool are not verified by the repository tests.
