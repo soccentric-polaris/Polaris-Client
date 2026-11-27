@@ -2,7 +2,7 @@
 
 ## Purpose and scope
 
-Polaris-Client is a CMake/Ninja C++ test application suite. The Makefile supports native host builds, ARM64 Docker/QEMU cross-builds, test execution, static analysis, Doxygen, and copying cross-built `lib/` and `bin/` trees to two NVIDIA devices.
+Polaris-Client is a CMake/Ninja C++ test application suite. The Makefile supports native host builds, ARM64 Docker/QEMU cross-builds, test execution, static analysis, Doxygen, and copying cross-built `lib/` and `bin/` trees to two target devices.
 
 ## 1. Prerequisites
 
@@ -10,7 +10,7 @@ Polaris-Client is a CMake/Ninja C++ test application suite. The Makefile support
 - The sibling `Polaris-HAL` checkout must be present because CMake resolves shared protobuf/HAL paths through the parent `Polaris/` directory.
 - Native quality targets require `clang-format`, `cmake-format`, `cppcheck`, `doxygen`, and Graphviz as applicable.
 - Docker targets require Docker and ARM64 emulation support. `make docker-install` may use `sudo apt` when Docker is absent.
-- Deployment additionally requires `sshpass`, network access to the target, and valid credentials. The Makefile defaults are `nvidia` / `nvidia`; override them rather than committing credentials.
+- Deployment additionally requires `sshpass`, network access to the target, and valid credentials. The Makefile defaults to user `root` with no password (key-based SSH); override with `HAL_SSH_USER`/`HAL_SSH_PASS` rather than committing credentials.
 
 ## 2. Setup
 
@@ -48,8 +48,8 @@ This Makefile does not declare a packaging target. Native outputs are under `bui
 ## 6. Deployment, install, and run
 
 ```bash
-HAL_SSH_USER=nvidia HAL_SSH_PASS='REDACTED' make deploy-a
-HAL_SSH_USER=nvidia HAL_SSH_PASS='REDACTED' make deploy-b
+HAL_SSH_USER=root HAL_SSH_PASS='REDACTED' make deploy-a
+HAL_SSH_USER=root HAL_SSH_PASS='REDACTED' make deploy-b
 make IP_A=192.168.1.3 IP_B=192.168.1.13 deploy
 make run-a [app] [args...]
 make run-b [app] [args...]
